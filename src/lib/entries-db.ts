@@ -13,6 +13,7 @@ type EntryRow = {
   title: string;
   body: string;
   filename: string;
+  deletionPending: number;
   latitude: number | null;
   longitude: number | null;
 };
@@ -37,6 +38,7 @@ const SCHEMA = `
     longitude REAL
   );
   CREATE TABLE IF NOT EXISTS photo_cleanup (filename TEXT PRIMARY KEY NOT NULL);
+  CREATE TABLE IF NOT EXISTS photo_deletions (id TEXT PRIMARY KEY NOT NULL);
   CREATE TRIGGER IF NOT EXISTS queue_deleted_photo AFTER DELETE ON photos
     BEGIN INSERT OR IGNORE INTO photo_cleanup VALUES (OLD.filename); END;
   CREATE TRIGGER IF NOT EXISTS queue_replaced_photo AFTER UPDATE OF filename ON photos
@@ -59,6 +61,7 @@ async function initializeDatabase() {
   const db = await openDatabaseAsync('field-notes.db');
   try {
     await db.execAsync(SCHEMA);
+    await resumePhotoDeletions(db);
     await clearRetiredPhotos(db);
     return db;
   } catch (error) {
@@ -72,7 +75,7 @@ function toEntry(row: EntryRow): Entry {
   const { id, created, kind, latitude, longitude } = row;
   const coordinates = latitude === null || longitude === null ? null : { latitude, longitude };
   if (kind === 'photo') {
-    return { id, kind, created, coordinates, filename: row.filename };
+    return { id, kind, created, coordinates, filename: row.filename, deletionPending: row.deletionPending === 1 };
   }
   return { id, kind, created, coordinates, title: row.title, body: row.body, modified: row.modified };
 }
@@ -80,10 +83,11 @@ function toEntry(row: EntryRow): Entry {
 /** Loads the mixed journal in creation order, including unlocated entries. */
 export async function loadEntries(db: SQLiteDatabase) {
   const rows = await db.getAllAsync<EntryRow>(`
-    SELECT id, 'note' AS kind, created, modified, title, body, '' AS filename, latitude, longitude
+    SELECT id, 'note' AS kind, created, modified, title, body, '' AS filename, latitude, longitude, 0 AS deletionPending
     FROM notes
     UNION ALL
-    SELECT id, 'photo', created, created, '', '', filename, latitude, longitude
+    SELECT id, 'photo', created, created, '', '', filename, latitude, longitude,
+      EXISTS (SELECT 1 FROM photo_deletions WHERE photo_deletions.id = photos.id)
     FROM photos
     ORDER BY created DESC, id DESC
   `);
@@ -121,7 +125,7 @@ async function clearRetiredPhotos(db: SQLiteDatabase) {
     const files = await db.getAllAsync<{ filename: string }>('SELECT filename FROM photo_cleanup');
     for (const { filename } of files) {
       try {
-        removePhotoFile(filename);
+        await removePhotoFile(filename);
         await db.runAsync('DELETE FROM photo_cleanup WHERE filename = ?', filename);
       } catch {
         // Keep the cleanup record until the file can be removed.
@@ -151,9 +155,11 @@ export async function writePhoto(
     await db.withExclusiveTransactionAsync(async (transaction) => {
       if (existing) {
         const result = await transaction.runAsync(
-          'UPDATE photos SET filename = ? WHERE id = ?', filename, existing.id,
+          `UPDATE photos SET filename = ? WHERE id = ?
+            AND NOT EXISTS (SELECT 1 FROM photo_deletions WHERE photo_deletions.id = photos.id)`,
+          filename, existing.id,
         );
-        if (!result.changes) throw new Error('Photo no longer exists.');
+        if (!result.changes) throw new Error('Photo is no longer available to replace.');
       } else {
         await transaction.runAsync(
           'INSERT INTO photos (id, filename, created, latitude, longitude) VALUES (?, ?, ?, ?, ?)',
@@ -168,9 +174,40 @@ export async function writePhoto(
   return photo;
 }
 
-/** Deletes an entry. A trigger queues any retired photo file in the same commit. */
-export async function eraseEntry(db: SQLiteDatabase, entry: Entry) {
-  const statement = entry.kind === 'note' ? 'DELETE FROM notes WHERE id = ?' : 'DELETE FROM photos WHERE id = ?';
-  await db.runAsync(statement, entry.id);
-  if (entry.kind === 'photo') await clearRetiredPhotos(db);
+/** Deletes a text note, which has no separate file to remove. */
+export async function eraseNote(db: SQLiteDatabase, id: string) {
+  await db.runAsync('DELETE FROM notes WHERE id = ?', id);
+}
+
+/** Records a deletion before touching the file so an interrupted delete can resume. */
+export async function queuePhotoDeletion(db: SQLiteDatabase, id: string) {
+  await db.runAsync('INSERT OR IGNORE INTO photo_deletions SELECT id FROM photos WHERE id = ?', id);
+}
+
+/** Removes the current file before finalizing the journal record. Safe to retry. */
+export async function finishPhotoDeletion(db: SQLiteDatabase, id: string) {
+  const photo = await db.getFirstAsync<{ filename: string }>(
+    'SELECT filename FROM photos INNER JOIN photo_deletions USING (id) WHERE id = ?', id,
+  );
+  if (!photo) return;
+
+  await removePhotoFile(photo.filename);
+  await db.withExclusiveTransactionAsync(async (transaction) => {
+    await transaction.runAsync('DELETE FROM photos WHERE id = ?', id);
+    // The existing deletion trigger queues the file, which has already been removed.
+    await transaction.runAsync('DELETE FROM photo_cleanup WHERE filename = ?', photo.filename);
+    await transaction.runAsync('DELETE FROM photo_deletions WHERE id = ?', id);
+  });
+}
+
+/** Retries interrupted deletions while keeping failures available in the journal. */
+async function resumePhotoDeletions(db: SQLiteDatabase) {
+  const pending = await db.getAllAsync<{ id: string }>('SELECT id FROM photo_deletions');
+  for (const { id } of pending) {
+    try {
+      await finishPhotoDeletion(db, id);
+    } catch {
+      // Keep the intent and the photo entry so the user can try again.
+    }
+  }
 }

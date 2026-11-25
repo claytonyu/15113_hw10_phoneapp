@@ -1,7 +1,7 @@
 // The map camera follows foreground GPS until the user explores manually.
 import { useNetworkState } from 'expo-network';
 import { router } from 'expo-router';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Alert, Linking, Text, View } from 'react-native';
 import MapView, { Marker, type Region } from 'react-native-maps';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -10,9 +10,10 @@ import { JournalButton, JournalUnavailable } from '@/components/journal-ui';
 import { MapAction } from '@/components/map-controls';
 import { colors, spacing } from '@/constants/field-notes-theme';
 import { useMapLocation } from '@/hooks/use-map-location';
+import { useMapMarkers } from '@/hooks/use-map-markers';
 import type { Coordinates, Entry } from '@/lib/entries';
 import { useJournal } from '@/lib/journal';
-import { groupMapMarkers } from '@/lib/map-markers';
+import type { MarkerGroup } from '@/lib/map-markers';
 
 const WORLD_REGION: Region = { latitude: 20, longitude: 0, latitudeDelta: 115, longitudeDelta: 150 };
 const FOLLOW_DELTA = 0.025;
@@ -30,28 +31,52 @@ export default function FieldMap() {
   const offline = network.isConnected === false || network.isInternetReachable === false;
   const location = useMapLocation();
   const map = useRef<MapView>(null);
-  const latestRegion = useRef(WORLD_REGION);
-  const [region, setRegion] = useState(WORLD_REGION);
+  const mapMoving = useRef(false);
+  const manuallyExploring = useRef(false);
+  const selectedCenter = useRef<Coordinates | null>(null);
+  const viewportVersion = useRef(0);
+  const [settledViewport, setSettledViewport] = useState(0);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [ready, setReady] = useState(false);
   const [following, setFollowing] = useState(true);
-  const [locating, setLocating] = useState(false);
-  const placementInProgress = useRef(false);
-  const followingPosition = following && location.position ? location.position.coords : null;
-  const markerGroups = useMemo(() => groupMapMarkers(entries, region, size), [entries, region, size]);
+  const followLatitude = following ? location.position?.coords.latitude : undefined;
+  const followLongitude = following ? location.position?.coords.longitude : undefined;
+  const markerGroups = useMapMarkers(map, entries, size, ready && status === 'ready', settledViewport, viewportVersion);
 
   useEffect(() => {
-    if (!ready || !followingPosition || offline) return;
-    map.current?.animateToRegion({
-      latitude: followingPosition.latitude, longitude: followingPosition.longitude,
+    if (!ready || manuallyExploring.current || followLatitude === undefined || followLongitude === undefined) return;
+    const view = map.current;
+    if (!view) return;
+    view.animateToRegion({
+      latitude: followLatitude, longitude: followLongitude,
       latitudeDelta: FOLLOW_DELTA, longitudeDelta: FOLLOW_DELTA,
     }, CAMERA_TRANSITION_MS);
-  }, [followingPosition, offline, ready]);
+  }, [followLatitude, followLongitude, ready]);
+
+  /** Switches to manual placement as soon as a gesture starts. */
+  function browseMap() {
+    manuallyExploring.current = true;
+    setFollowing(false);
+  }
+
+  /** Clears manual placement when the user asks to follow their location again. */
+  function resumeFollowing() {
+    manuallyExploring.current = false;
+    selectedCenter.current = null;
+    setFollowing(true);
+  }
+
+  /** Publishes the viewport used for clustering after layout or camera movement. */
+  function settleViewport() {
+    mapMoving.current = false;
+    viewportVersion.current += 1;
+    setSettledViewport(viewportVersion.current);
+  }
 
   /** Requests access or restores the camera to the device location. */
   async function followLocation() {
     if (location.granted) {
-      setFollowing(true);
+      resumeFollowing();
       if (location.unavailable) location.retryLocation();
       return;
     }
@@ -63,7 +88,7 @@ export default function FieldMap() {
       }
       return;
     }
-    if (await location.requestLocation()) setFollowing(true);
+    if (await location.requestLocation()) resumeFollowing();
   }
 
   /** Opens a fresh editor using the selected coordinates without putting them in a URL. */
@@ -72,40 +97,36 @@ export default function FieldMap() {
     router.push(kind === 'note' ? '/note' : '/camera');
   }
 
-  /** Uses the map center in browse mode and the latest device fix in follow mode. */
-  async function placeFromToolbar(kind: Entry['kind']) {
-    if (placementInProgress.current || status !== 'ready') return;
+  /** Freezes the selected center or a recent GPS fix at the toolbar tap. */
+  function placeFromToolbar(kind: Entry['kind']) {
+    const tappedAt = Date.now();
+    if (status !== 'ready') return;
     if (offline) {
       compose(kind, null);
       return;
     }
-    if (!following || !location.granted) {
-      const { latitude, longitude } = latestRegion.current;
-      compose(kind, ready ? { latitude, longitude } : null);
+    const manual = manuallyExploring.current;
+    const center = ready ? selectedCenter.current : null;
+    const coordinates = manual ? center : location.snapshotLocation(tappedAt);
+    if (coordinates) {
+      compose(kind, coordinates);
       return;
     }
 
-    placementInProgress.current = true;
-    setLocating(true);
-    try {
-      const coordinates = await location.snapshotLocation();
-      if (coordinates) {
-        compose(kind, coordinates);
-      } else {
-        Alert.alert('Location not available', 'Wait for the location dot, choose a point on the map, or save without a location.', [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Continue without location', onPress: () => compose(kind, null) },
-        ]);
-      }
-    } finally {
-      placementInProgress.current = false;
-      setLocating(false);
-    }
+    let guidance = 'Move the map to choose a center, or press and hold a spot.';
+    if (!ready) guidance = 'Wait for the map to load, or continue without a location.';
+    else if (!manual && location.granted) guidance = 'Try again when a recent GPS fix is available, or choose a spot on the map.';
+    else if (!manual) guidance = 'Tap Use location for GPS, or move the map to choose a spot.';
+
+    Alert.alert('Location not available', guidance, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Continue without location', onPress: () => compose(kind, null) },
+    ]);
   }
 
   /** Offers both entry types at the point captured by the long press. */
   function chooseEntryKind(coordinates: Coordinates) {
-    if (status !== 'ready' || placementInProgress.current) return;
+    if (status !== 'ready' || !ready) return;
     const placement = offline ? null : coordinates;
     Alert.alert('Add an entry', offline ? 'This entry will be saved without a location.' : 'Save an entry at this spot.', [
       { text: 'Cancel', style: 'cancel' },
@@ -115,7 +136,7 @@ export default function FieldMap() {
   }
 
   /** Opens every entry in a cluster, even when several share identical coordinates. */
-  function openGroup(group: (typeof markerGroups)[number]) {
+  function openGroup(group: MarkerGroup) {
     if (group.entries.length === 1) {
       openEntry(group.entries[0]);
       return;
@@ -124,12 +145,11 @@ export default function FieldMap() {
   }
 
   const followLabel = location.granted ? 'Follow me' : 'Use location';
-  let mapStatus = 'Browse the map';
+  let mapStatus = 'Move the map to choose a location';
   if (location.granted && following) {
-    mapStatus = location.position ? 'Following your location' : 'Finding your location…';
+    if (location.unavailable) mapStatus = 'Location unavailable';
+    else mapStatus = location.position ? 'Following your location' : 'Finding your location…';
   }
-  if (locating) mapStatus = 'Getting this entry’s location…';
-  else if (location.unavailable) mapStatus = 'Location unavailable';
   if (offline) mapStatus = 'Offline · Map imagery may be unavailable';
 
   if (status !== 'ready') return <JournalUnavailable />;
@@ -145,6 +165,7 @@ export default function FieldMap() {
         style={{ flex: 1, overflow: 'hidden', backgroundColor: colors.line }}
       >
         <MapView
+          ref={map}
           style={{ flex: 1 }}
           initialRegion={WORLD_REGION}
           showsUserLocation={location.granted}
@@ -152,15 +173,29 @@ export default function FieldMap() {
           toolbarEnabled={false}
           rotateEnabled={false}
           pitchEnabled={false}
-          onMapReady={() => setReady(true)}
-          onPanDrag={() => setFollowing(false)}
-          onTouchStart={(event) => { if (event.nativeEvent.touches.length > 1) setFollowing(false); }}
-          onDoublePress={() => setFollowing(false)}
-          onRegionChangeStart={(_, details) => { if (details?.isGesture) setFollowing(false); }}
-          onRegionChange={(next) => { latestRegion.current = next; }}
-          onRegionChangeComplete={(next) => {
-            latestRegion.current = next;
-            setRegion(next);
+          onMapReady={() => {
+            setReady(true);
+            settleViewport();
+          }}
+          onPanDrag={browseMap}
+          onTouchStart={(event) => { if (event.nativeEvent.touches.length > 1) browseMap(); }}
+          onDoublePress={browseMap}
+          onRegionChangeStart={(_, details) => {
+            mapMoving.current = true;
+            viewportVersion.current += 1;
+            if (details?.isGesture) browseMap();
+            if (manuallyExploring.current) selectedCenter.current = null;
+          }}
+          onRegionChange={({ latitude, longitude }, details) => {
+            if (!mapMoving.current) viewportVersion.current += 1;
+            mapMoving.current = true;
+            if (details?.isGesture) browseMap();
+            if (manuallyExploring.current) selectedCenter.current = { latitude, longitude };
+          }}
+          onRegionChangeComplete={({ latitude, longitude }, details) => {
+            if (details?.isGesture) browseMap();
+            if (manuallyExploring.current) selectedCenter.current = { latitude, longitude };
+            settleViewport();
           }}
           onLongPress={(event) => chooseEntryKind(event.nativeEvent.coordinate)}
         >
@@ -185,9 +220,9 @@ export default function FieldMap() {
         )}
       </View>
       <View style={{ flexDirection: 'row', gap: spacing.small, padding: spacing.medium }}>
-        <MapAction icon={{ ios: 'plus', android: 'add' }} label="Note" primary disabled={locating} onPress={() => { void placeFromToolbar('note'); }} />
-        <MapAction icon={{ ios: 'camera', android: 'photo_camera' }} label="Photo" primary disabled={locating} onPress={() => { void placeFromToolbar('photo'); }} />
-        <MapAction icon={{ ios: 'list.bullet', android: 'list' }} label="All Notes" disabled={locating} onPress={() => router.push('/all-notes')} />
+        <MapAction icon={{ ios: 'plus', android: 'add' }} label="Note" primary onPress={() => placeFromToolbar('note')} />
+        <MapAction icon={{ ios: 'camera', android: 'photo_camera' }} label="Photo" primary onPress={() => placeFromToolbar('photo')} />
+        <MapAction icon={{ ios: 'list.bullet', android: 'list' }} label="All Notes" onPress={() => router.push('/all-notes')} />
       </View>
     </SafeAreaView>
   );

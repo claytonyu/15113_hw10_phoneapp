@@ -5,7 +5,7 @@ import { useLocalSearchParams } from 'expo-router';
 import { useIsFocused } from 'expo-router/react-navigation';
 import { Stack } from 'expo-router/stack';
 import { useEffect, useRef, useState } from 'react';
-import { AppState, Linking, ScrollView, Text, View } from 'react-native';
+import { AppState, Linking, Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { JournalButton, JournalUnavailable, leaveScreen, ScreenMessage } from '@/components/journal-ui';
@@ -16,6 +16,7 @@ import { useJournal } from '@/lib/journal';
 import { discardCapture } from '@/lib/photo-files';
 
 const CAPTURE_QUALITY = 0.82;
+const CAMERA_TIMEOUT_MS = 10_000;
 
 /** Loads an optional replacement target before opening the camera. */
 export default function CameraScreen() {
@@ -53,15 +54,22 @@ function CameraEditor({ existing }: { existing?: Photo }) {
   }, []);
 
   useEffect(() => {
-    if (!focused) return;
     const subscription = AppState.addEventListener('change', (state) => {
       setAppActive(state === 'active');
-      if (state === 'active') {
+      if (state === 'active' && focused) {
         void refreshPermission().catch(() => setError('Couldn’t check camera access. Try again.'));
-      } else setReady(false);
+      } else if (state !== 'active') setReady(false);
     });
     return () => subscription.remove();
   }, [focused, refreshPermission, setError]);
+
+  useEffect(() => {
+    if (!permission?.granted || !focused || !appActive || ready || preview) return;
+    const timeout = setTimeout(() => {
+      setError('The camera is taking too long to start. Try restarting it.');
+    }, CAMERA_TIMEOUT_MS);
+    return () => clearTimeout(timeout);
+  }, [permission?.granted, focused, appActive, ready, preview, attempt, setError]);
 
   /** Requests permission or points the user to settings after a permanent denial. */
   function enableCamera() {
@@ -73,18 +81,34 @@ function CameraEditor({ existing }: { existing?: Photo }) {
 
   /** Stores a JPEG preview to review before adding it to the journal. */
   function takePhoto() {
-    const view = camera.current;
-    if (!view || !ready) return;
+    if (!ready || !focused || !appActive) return;
     void action.run(async () => {
-      const photo = await view.takePictureAsync({ quality: CAPTURE_QUALITY, exif: false });
-      if (!photo) throw new Error('No image returned.');
-      if (!active.current) {
-        discardCapture(photo.uri);
-        return;
+      const view = camera.current;
+      if (!view) throw new Error('Camera view is unavailable.');
+
+      let timedOut = false;
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      const deadline = new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => {
+          timedOut = true;
+          reject(new Error('Camera capture timed out.'));
+        }, CAMERA_TIMEOUT_MS);
+      });
+      try {
+        const capture = view.takePictureAsync({ quality: CAPTURE_QUALITY, exif: false }).then((photo) => {
+          // A native capture can finish after the camera has been restarted.
+          if (photo && (timedOut || !active.current)) discardCapture(photo.uri);
+          return photo;
+        });
+        const photo = await Promise.race([capture, deadline]);
+        if (!active.current) return;
+        if (!photo) throw new Error('No image returned.');
+        captureFile.current = photo.uri;
+        setPreview(photo.uri);
+      } finally {
+        clearTimeout(timeout);
       }
-      captureFile.current = photo.uri;
-      setPreview(photo.uri);
-    }, 'Couldn’t take a photo. Try again.');
+    }, 'Couldn’t take a photo. Try again or restart the camera.');
   }
 
   /** Discards this preview and opens a fresh camera session. */
@@ -131,6 +155,8 @@ function CameraEditor({ existing }: { existing?: Photo }) {
     );
   }
 
+  const shutterDisabled = !ready || !focused || !appActive || action.busy;
+
   return (
     <SafeAreaView edges={['bottom', 'left', 'right']} style={{ flex: 1 }}>
       <Stack.Screen options={{ title: existing ? 'Replace photo' : 'Camera' }} />
@@ -140,6 +166,7 @@ function CameraEditor({ existing }: { existing?: Photo }) {
         ) : focused && appActive && (
           <CameraView
             key={attempt}
+            ref={camera}
             style={{ flex: 1 }}
             facing="back"
             mode="picture"
@@ -159,8 +186,23 @@ function CameraEditor({ existing }: { existing?: Photo }) {
             </>
           ) : (
             <>
-              <JournalButton label={action.busy ? 'Capturing…' : 'Take photo'} disabled={!ready || action.busy} onPress={takePhoto} />
-              {!ready && !!action.error && <JournalButton label="Retry camera" secondary onPress={retryCamera} />}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Take photo"
+                accessibilityState={{ disabled: shutterDisabled, busy: action.busy }}
+                disabled={shutterDisabled}
+                onPress={takePhoto}
+                style={({ pressed }) => ({
+                  minHeight: 48, paddingHorizontal: spacing.large, borderRadius: 12,
+                  justifyContent: 'center', backgroundColor: colors.accent,
+                  opacity: pressed || shutterDisabled ? 0.6 : 1,
+                })}
+              >
+                <Text style={{ color: colors.ink, fontWeight: '600' }}>
+                  {action.busy ? 'Capturing…' : ready ? 'Take photo' : 'Starting camera…'}
+                </Text>
+              </Pressable>
+              {!!action.error && <JournalButton label="Restart camera" secondary onPress={retryCamera} />}
             </>
           )}
         </View>

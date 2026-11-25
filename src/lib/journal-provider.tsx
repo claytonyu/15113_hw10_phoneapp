@@ -1,8 +1,8 @@
 // Keeps the visible journal in sync with committed SQLite changes.
 import { useEffect, useRef, useState, type PropsWithChildren } from 'react';
 
-import type { Coordinates, Entry, Note, Photo } from '@/lib/entries';
-import { eraseEntry, loadEntries, openEntriesDatabase, writeNote, writePhoto } from '@/lib/entries-db';
+import { compareEntryCreation, type Coordinates, type Entry, type Note, type Photo } from '@/lib/entries';
+import { eraseNote, finishPhotoDeletion, loadEntries, openEntriesDatabase, queuePhotoDeletion, writeNote, writePhoto } from '@/lib/entries-db';
 import { JournalContext } from '@/lib/journal';
 
 /** Provides local data and keeps the new entry's location out of navigation URLs. */
@@ -45,7 +45,7 @@ export function JournalProvider({ children }: PropsWithChildren) {
   function recordSaved(entry: Entry, existing?: Entry) {
     setEntries((previous) => existing
       ? previous.map((saved) => saved.id === entry.id ? entry : saved)
-      : [entry, ...previous]);
+      : [entry, ...previous].sort(compareEntryCreation));
   }
 
   /** Persists a note before exposing the change to other screens. */
@@ -64,11 +64,19 @@ export function JournalProvider({ children }: PropsWithChildren) {
     });
   }
 
-  /** Removes an entry from the journal after SQLite commits the deletion. */
+  /** Keeps unfinished photo deletions in the journal so they can be retried. */
   function deleteEntry(entry: Entry) {
     return commit(async () => {
       const db = await openEntriesDatabase();
-      await eraseEntry(db, entry);
+      if (entry.kind === 'photo') {
+        await queuePhotoDeletion(db, entry.id);
+        setEntries((previous) => previous.map((saved) => saved.kind === 'photo' && saved.id === entry.id
+          ? { ...saved, deletionPending: true }
+          : saved));
+        await finishPhotoDeletion(db, entry.id);
+      } else {
+        await eraseNote(db, entry.id);
+      }
       setEntries((previous) => previous.filter((saved) => saved.id !== entry.id));
     });
   }

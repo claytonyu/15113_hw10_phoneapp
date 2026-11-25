@@ -1,5 +1,6 @@
 // Camera previews live in cache. Saved photos use an app-private directory.
 import { Directory, File, Paths } from 'expo-file-system';
+import { deleteAsync } from 'expo-file-system/legacy';
 
 /** Resolves a database filename in the current app sandbox. */
 export function photoFile(filename: string) {
@@ -13,10 +14,9 @@ export async function persistPhoto(uri: string, filename: string) {
   await new File(uri).copy(photoFile(filename));
 }
 
-/** Removes a stored image if it is still present. */
+/** Accepts an already absent file and propagates errors from the native delete. */
 export function removePhotoFile(filename: string) {
-  const file = photoFile(filename);
-  if (file.exists) file.delete();
+  return deleteAsync(photoFile(filename).uri, { idempotent: true });
 }
 
 /** Removes a camera preview without making cache cleanup a condition of saving. */

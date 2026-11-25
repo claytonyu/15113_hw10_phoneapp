@@ -49,7 +49,7 @@ function EntryRow({ entry }: { entry: Entry }) {
         borderWidth: 1, borderColor: colors.line, opacity: pressed ? 0.75 : 1,
       })}
     >
-      {isPhoto && (
+      {isPhoto && !entry.deletionPending && (
         <Image
           source={photoFile(entry.filename).uri}
           accessibilityLabel="Photo thumbnail"
@@ -61,7 +61,7 @@ function EntryRow({ entry }: { entry: Entry }) {
       )}
       <View style={{ flex: 1, gap: 4 }}>
         <Text numberOfLines={2} style={{ color: colors.ink, fontSize: 17, fontWeight: '700' }}>
-          {isPhoto ? 'Photo' : entry.title}
+          {isPhoto ? (entry.deletionPending ? 'Photo deletion pending' : 'Photo') : entry.title}
         </Text>
         <Text style={{ color: colors.muted }}>{dateFormat.format(entry.created)}</Text>
         {!entry.coordinates && <Text style={{ color: colors.muted }}>No map location</Text>}

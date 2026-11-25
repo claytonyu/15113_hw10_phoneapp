@@ -14,11 +14,11 @@ Map Screen
 - Shows the user where they are.
 - Shows all notes located on the screen. If there are too many notes to display in a particular place, do some visual "coagulation".
 - This should be the main page of the app.
-- The map can be in "follow" mode, which follows the user's real-world location as they move around.
+- The map can be in "follow" mode, which follows the user's real-world location as they move around, keeping the map centered on their current position.
 - Or, the user can zoom in/out and move the map to look elsewhere. When this happens, let the user return to follow mode using a button.
 - Also allow a long tap anywhere on the map interface to create a note or take a photo that is localized there.
 - There should be a plus / camera icon to add a note and take a photo, respectively. They will be located at the user's location (if in follow mode) or the center of wherever the map screen is zoomed to.
-- The notes/photo location should be sampled at moment of button press, since the user might move in the middle of a photo or while taking notes.
+- Fix the location when the user taps Note or Photo. In follow mode, use the most recent foreground GPS fix available at the tap if it is at most 5 seconds old and reports accuracy of 50 meters or better. If a fix is unavailable, the user can try again, choose a spot on the map, or explicitly continue without a location.
 
 Camera Screen
 - Allows the user to take a photo, and save or delete it before adding.
@@ -78,6 +78,6 @@ Photo:
 ## Exceptions
 - Without network connectivity, the app should clearly display this on the map screen. Allow the user to enter to the "all notes" screen and view their notes in more detail.
 - Users can still create and view saved entries offline, while the map may be incomplete or unavailable. These notes will not have a location and do not show up on the map, but can be seen in the All Notes page.
-- If location permissions are not disabled, just allow for moving/panning to set the location of new tasks.
+- If location permission has not been granted, users can pan the map to select a center or press and hold to select a point. The initial map center is not a location selection.
 
 ## Open Questions

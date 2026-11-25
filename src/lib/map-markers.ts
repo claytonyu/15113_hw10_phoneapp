@@ -1,49 +1,62 @@
-// Groups visible entries at the current map scale without another native library.
-import type { Region } from 'react-native-maps';
+// Groups native screen points without losing the entries behind an overlapping pin.
+import type { Point } from 'react-native-maps';
 
 import type { Coordinates, Entry } from '@/lib/entries';
 
-type LocatedEntry = Entry & { coordinates: Coordinates };
-type MarkerGroup = { key: string; entries: LocatedEntry[]; coordinates: Coordinates };
+export type LocatedEntry = Entry & { coordinates: Coordinates };
+export type MarkerGroup = { key: string; entries: LocatedEntry[]; coordinates: Coordinates };
 
 const MARKER_SPACING = 54;
 
-/** Keeps distances and marker positions consistent across the antimeridian. */
-function wrapLongitude(value: number) {
-  return ((value + 180) % 360 + 360) % 360 - 180;
+/** Lets the native map render a pin at the original coordinate. */
+export function singleMarker(entry: LocatedEntry): MarkerGroup {
+  return { key: entry.id, entries: [entry], coordinates: entry.coordinates };
 }
 
-/** Groups entries whose positions fall in the same screen-sized grid cell. */
+/** Groups visible pins around nearby anchors, including across grid boundaries. */
 export function groupMapMarkers(
-  entries: Entry[],
-  region: Region,
+  projected: { entry: LocatedEntry; point: Point }[],
   size: { width: number; height: number },
 ): MarkerGroup[] {
-  if (!size.width || !size.height || region.latitudeDelta <= 0 || region.longitudeDelta <= 0) return [];
-  const cells = new Map<string, { entries: LocatedEntry[]; latitude: number; longitudeOffset: number }>();
+  const groups: MarkerGroup[] = [];
+  const cells = new Map<string, { point: Point; group: MarkerGroup }[]>();
 
-  for (const entry of entries) {
-    if (!entry.coordinates) continue;
-    const { latitude, longitude } = entry.coordinates;
-    const longitudeOffset = wrapLongitude(longitude - region.longitude);
-    const x = (longitudeOffset / region.longitudeDelta + 0.5) * size.width;
-    const y = ((region.latitude - latitude) / region.latitudeDelta + 0.5) * size.height;
-    if (x < 0 || x > size.width || y < 0 || y > size.height) continue;
+  for (const { entry, point } of projected) {
+    const { x, y } = point;
+    if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || x > size.width || y < 0 || y > size.height) {
+      continue;
+    }
 
-    const key = `${Math.floor(x / MARKER_SPACING)}:${Math.floor(y / MARKER_SPACING)}`;
-    const cell = cells.get(key) ?? { entries: [], latitude: 0, longitudeOffset: 0 };
-    cell.entries.push({ ...entry, coordinates: entry.coordinates });
-    cell.latitude += latitude;
-    cell.longitudeOffset += longitudeOffset;
-    cells.set(key, cell);
+    const column = Math.floor(x / MARKER_SPACING);
+    const row = Math.floor(y / MARKER_SPACING);
+    let closest: MarkerGroup | undefined;
+    let closestDistance = MARKER_SPACING ** 2;
+
+    for (let dx = -1; dx <= 1; dx += 1) {
+      for (let dy = -1; dy <= 1; dy += 1) {
+        const neighbors = cells.get(`${column + dx}:${row + dy}`) ?? [];
+        for (const anchor of neighbors) {
+          const distance = (x - anchor.point.x) ** 2 + (y - anchor.point.y) ** 2;
+          if (distance <= closestDistance) {
+            closest = anchor.group;
+            closestDistance = distance;
+          }
+        }
+      }
+    }
+
+    if (closest) {
+      closest.entries.push(entry);
+    } else {
+      // A real, visible coordinate stays valid at map edges and across the antimeridian.
+      const group = singleMarker(entry);
+      groups.push(group);
+      const key = `${column}:${row}`;
+      const anchors = cells.get(key) ?? [];
+      anchors.push({ point, group });
+      cells.set(key, anchors);
+    }
   }
 
-  return Array.from(cells, ([key, cell]) => ({
-    key: cell.entries.length === 1 ? cell.entries[0].id : key,
-    entries: cell.entries,
-    coordinates: {
-      latitude: cell.latitude / cell.entries.length,
-      longitude: wrapLongitude(region.longitude + cell.longitudeOffset / cell.entries.length),
-    },
-  }));
+  return groups;
 }

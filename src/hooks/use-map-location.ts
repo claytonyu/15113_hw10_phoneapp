@@ -4,9 +4,9 @@ import { useIsFocused } from 'expo-router/react-navigation';
 import { useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 
-const MAX_LOCATION_AGE_MS = 30_000;
-const LOCATION_WAIT_MS = 4_000;
-const MOVEMENT_INTERVAL_METERS = 8;
+const MAX_PLACEMENT_AGE_MS = 5_000;
+const MAX_PLACEMENT_ACCURACY_METERS = 50;
+const FOLLOW_INTERVAL_MS = 1_000;
 
 /** Provides the permission state and a recent fix to snapshot when placing an entry. */
 export function useMapLocation() {
@@ -16,7 +16,8 @@ export function useMapLocation() {
   const [position, setPosition] = useState<Location.LocationObject | null>(null);
   const [unavailable, setUnavailable] = useState(false);
   const [attempt, setAttempt] = useState(0);
-  const lastFix = useRef<Location.LocationObject | null>(null);
+  const placementFix = useRef<Location.LocationObject | null>(null);
+  const permissionConfirmed = useRef(false);
   const granted = permission?.granted === true;
 
   useEffect(() => {
@@ -28,35 +29,52 @@ export function useMapLocation() {
     if (!focused || !appActive) return;
     let active = true;
     Location.getForegroundPermissionsAsync().then(
-      (result) => { if (active) setPermission(result); },
+      (result) => {
+        if (!active) return;
+        permissionConfirmed.current = result.granted;
+        setPermission(result);
+      },
       () => { if (active) setUnavailable(true); },
     );
-    return () => { active = false; };
+    return () => {
+      active = false;
+      permissionConfirmed.current = false;
+    };
   }, [focused, appActive]);
 
   useEffect(() => {
     if (!focused || !appActive || !granted) return;
     let active = true;
+    let latestTimestamp = -Infinity;
     let subscription: Location.LocationSubscription | undefined;
 
     /** Shares usable fixes across the map and placement controls. */
     function receive(fix: Location.LocationObject) {
-      if (!active || (lastFix.current && fix.timestamp < lastFix.current.timestamp)) return;
-      lastFix.current = fix;
+      if (!active || fix.timestamp > Date.now()) return;
+      const { accuracy } = fix.coords;
+      if (accuracy !== null && accuracy >= 0 && accuracy <= MAX_PLACEMENT_ACCURACY_METERS
+        && (!placementFix.current || fix.timestamp >= placementFix.current.timestamp)) {
+        placementFix.current = fix;
+      }
+      if (fix.timestamp < latestTimestamp) return;
+      latestTimestamp = fix.timestamp;
       setPosition(fix);
       setUnavailable(false);
     }
 
     /** Gives the user a retry action if the platform cannot supply a fix. */
     function fail() {
-      if (active) setUnavailable(true);
+      if (!active) return;
+      placementFix.current = null;
+      setUnavailable(true);
     }
 
-    Location.getLastKnownPositionAsync({ maxAge: MAX_LOCATION_AGE_MS }).then((fix) => {
-      if (fix) receive(fix);
-    }).catch(() => {});
     Location.watchPositionAsync(
-      { accuracy: Location.Accuracy.Balanced, distanceInterval: MOVEMENT_INTERVAL_METERS },
+      {
+        accuracy: Location.Accuracy.High,
+        distanceInterval: 0, // Keep getting fresh fixes while standing still.
+        timeInterval: FOLLOW_INTERVAL_MS,
+      },
       receive,
       fail,
     ).then((watch) => {
@@ -66,6 +84,7 @@ export function useMapLocation() {
 
     return () => {
       active = false;
+      placementFix.current = null;
       subscription?.remove();
     };
   }, [focused, appActive, granted, attempt]);
@@ -74,6 +93,7 @@ export function useMapLocation() {
   async function requestLocation() {
     try {
       const result = await Location.requestForegroundPermissionsAsync();
+      permissionConfirmed.current = result.granted;
       setPermission(result);
       if (result.granted) setUnavailable(false);
       return result.granted;
@@ -83,28 +103,14 @@ export function useMapLocation() {
     }
   }
 
-  /** Uses a recent fix or starts a short location request when the user taps. */
-  async function snapshotLocation() {
-    const last = lastFix.current;
-    if (last && Date.now() - last.timestamp <= MAX_LOCATION_AGE_MS) {
-      return { latitude: last.coords.latitude, longitude: last.coords.longitude };
-    }
-
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      const deadline = new Promise<null>((resolve) => {
-        timer = setTimeout(() => resolve(null), LOCATION_WAIT_MS);
-      });
-      const fix = await Promise.race([
-        Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced, mayShowUserSettingsDialog: false }),
-        deadline,
-      ]);
-      return fix ? { latitude: fix.coords.latitude, longitude: fix.coords.longitude } : null;
-    } catch {
-      return null;
-    } finally {
-      clearTimeout(timer);
-    }
+  /** Freezes a sufficiently recent fix that was already available at the tap. */
+  function snapshotLocation(tappedAt: number) {
+    const fix = placementFix.current;
+    if (!focused || !appActive || !granted || !permissionConfirmed.current || !fix) return null;
+    const age = tappedAt - fix.timestamp;
+    if (age < 0 || age > MAX_PLACEMENT_AGE_MS) return null;
+    const { latitude, longitude } = fix.coords;
+    return { latitude, longitude };
   }
 
   return {

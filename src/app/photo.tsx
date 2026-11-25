@@ -20,27 +20,39 @@ export default function PhotoScreen() {
   if (status !== 'ready') return <JournalUnavailable />;
   if (entry?.kind !== 'photo') return <ScreenMessage message="This photo is no longer available." />;
 
+  /** Reports a failure while keeping the photo's delete action available. */
+  function deletePhoto(photo: Photo) {
+    void action.run(() => deleteEntry(photo), 'Couldn’t finish deleting this photo. Try again.', leaveScreen);
+  }
+
   /** Asks for confirmation before deleting the photo record and its stored file. */
   function confirmDelete(photo: Photo) {
     Alert.alert('Delete photo?', 'This permanently removes the photo from your journal.', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete', style: 'destructive',
-        onPress: () => {
-          void action.run(() => deleteEntry(photo), 'Couldn’t delete this photo. Try again.', leaveScreen);
-        },
+        onPress: () => deletePhoto(photo),
       },
     ]);
   }
 
   return (
     <SafeAreaView edges={['bottom', 'left', 'right']} style={{ flex: 1 }}>
-      <ZoomablePhoto key={entry.filename} uri={photoFile(entry.filename).uri} />
+      {entry.deletionPending
+        ? <ScreenMessage message={action.busy ? 'Deleting photo…' : 'Photo deletion is pending.'} />
+        : <ZoomablePhoto key={entry.filename} uri={photoFile(entry.filename).uri} />}
       <View style={{ padding: spacing.medium, gap: spacing.small }}>
         {!!action.error && <Text accessibilityRole="alert" style={{ color: colors.danger }}>{action.error}</Text>}
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.small }}>
-          <JournalButton label="Replace photo" disabled={action.busy} onPress={() => router.push({ pathname: '/camera', params: { replace: entry.id } })} />
-          <JournalButton label={action.busy ? 'Deleting…' : 'Delete photo'} disabled={action.busy} onPress={() => confirmDelete(entry)} secondary />
+          {!entry.deletionPending && (
+            <JournalButton label="Replace photo" disabled={action.busy} onPress={() => router.push({ pathname: '/camera', params: { replace: entry.id } })} />
+          )}
+          <JournalButton
+            label={entry.deletionPending ? 'Retry deletion' : 'Delete photo'}
+            disabled={action.busy}
+            onPress={() => entry.deletionPending ? deletePhoto(entry) : confirmDelete(entry)}
+            secondary
+          />
         </View>
       </View>
     </SafeAreaView>
