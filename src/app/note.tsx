@@ -3,9 +3,9 @@ import { Host, TextInput, useNativeState } from '@expo/ui';
 import { useLocalSearchParams } from 'expo-router';
 import { Stack } from 'expo-router/stack';
 import { useState } from 'react';
-import { Alert, ScrollView, Text, View } from 'react-native';
+import { ScrollView, Text, View } from 'react-native';
 
-import { JournalButton, JournalUnavailable, leaveScreen, ScreenMessage } from '@/components/journal-ui';
+import { confirmEntryDeletion, JournalButton, JournalUnavailable, leaveScreen, ScreenMessage } from '@/components/journal-ui';
 import { colors, spacing } from '@/constants/field-notes-theme';
 import { useScreenAction } from '@/hooks/use-screen-action';
 import type { Note } from '@/lib/entries';
@@ -45,13 +45,9 @@ function NoteEditor({ note, action }: { note?: Note; action: ReturnType<typeof u
 
   /** Asks for confirmation before permanently removing the note. */
   function confirmDelete(existing: Note) {
-    Alert.alert('Delete note?', 'This permanently removes the note from your journal.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete', style: 'destructive',
-        onPress: () => { void action.run(() => deleteEntry(existing), 'Couldn’t delete this note. Try again.', leaveScreen); },
-      },
-    ]);
+    confirmEntryDeletion(existing, () => {
+      void action.run(() => deleteEntry(existing), 'Couldn’t delete this note. Try again.', leaveScreen);
+    });
   }
 
   return (
@@ -90,7 +86,7 @@ function NoteEditor({ note, action }: { note?: Note; action: ReturnType<typeof u
       {!!action.error && <Text accessibilityRole="alert" style={{ color: colors.danger }}>{action.error}</Text>}
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.small }}>
         <JournalButton label={action.busy ? 'Working…' : 'Save note'} disabled={action.busy} onPress={save} />
-        {note && <JournalButton label="Delete note" secondary disabled={action.busy} onPress={() => confirmDelete(note)} />}
+        {note && <JournalButton label="Delete note" variant="destructive" disabled={action.busy} onPress={() => confirmDelete(note)} />}
       </View>
     </ScrollView>
   );

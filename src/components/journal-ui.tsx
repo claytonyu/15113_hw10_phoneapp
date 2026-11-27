@@ -1,30 +1,48 @@
 // Shared controls and states for the storage-backed screens.
-import { Button, Host } from '@expo/ui';
 import { router } from 'expo-router';
-import { ActivityIndicator, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, Text, View } from 'react-native';
 
 import { colors, spacing } from '@/constants/field-notes-theme';
+import type { Entry } from '@/lib/entries';
 import { useJournal } from '@/lib/journal';
 
-/** Renders a native action with a consistent touch target and palette. */
+/** Uses one surface for both the button color and its touch target. */
 export function JournalButton({
-  label, onPress, secondary = false, disabled = false,
+  label, onPress, variant = 'primary', disabled = false,
 }: {
   label: string;
   onPress: () => void;
-  secondary?: boolean;
+  variant?: 'primary' | 'secondary' | 'destructive';
   disabled?: boolean;
 }) {
+  const primary = variant === 'primary';
+  const outlined = variant === 'secondary';
+
   return (
-    <Host matchContents>
-      <Button
-        label={label}
-        onPress={onPress}
-        disabled={disabled}
-        variant={secondary ? 'outlined' : 'filled'}
-        style={{ height: 48, paddingHorizontal: spacing.large, backgroundColor: secondary ? undefined : colors.accent }}
-      />
-    </Host>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => ({
+        minHeight: 48,
+        maxWidth: '100%',
+        paddingHorizontal: spacing.medium,
+        paddingVertical: spacing.small,
+        borderRadius: 12,
+        borderCurve: 'continuous',
+        borderWidth: outlined ? 1 : 0,
+        borderColor: colors.line,
+        backgroundColor: primary ? colors.accent : outlined ? colors.surface : 'transparent',
+        alignItems: 'center',
+        justifyContent: 'center',
+        opacity: disabled ? 0.5 : pressed ? 0.75 : 1,
+      })}
+    >
+      <Text style={{ color: variant === 'destructive' ? colors.danger : colors.ink, fontWeight: '600', textAlign: 'center' }}>
+        {label}
+      </Text>
+    </Pressable>
   );
 }
 
@@ -54,6 +72,15 @@ export function JournalUnavailable() {
       <JournalButton label="Try again" onPress={retry} />
     </View>
   );
+}
+
+/** Confirms permanent deletion from either the list or the detail screen. */
+export function confirmEntryDeletion(entry: Entry, onConfirm: () => void) {
+  const subject = entry.kind === 'note' ? `“${entry.title}”` : 'this photo';
+  Alert.alert(`Delete ${entry.kind}?`, `Are you sure you want to permanently delete ${subject}?`, [
+    { text: 'Cancel', style: 'cancel' },
+    { text: 'Delete', style: 'destructive', onPress: onConfirm },
+  ]);
 }
 
 /** Returns to the previous screen, including when a route was opened directly. */

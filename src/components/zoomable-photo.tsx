@@ -5,8 +5,8 @@ import { View } from 'react-native';
 import { GestureDetector, usePanGesture, usePinchGesture, useSimultaneousGestures } from 'react-native-gesture-handler';
 import Animated, { clamp, useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 
-import { JournalButton, ScreenMessage } from '@/components/journal-ui';
-import { colors, spacing } from '@/constants/field-notes-theme';
+import { ScreenMessage } from '@/components/journal-ui';
+import { colors } from '@/constants/field-notes-theme';
 
 const FIT_SCALE = 1;
 const MAX_SCALE = 5;
@@ -52,13 +52,6 @@ export function ZoomablePhoto({ uri }: { uri: string }) {
     transform: [{ translateX: panX.value }, { translateY: panY.value }, { scale: scale.value }],
   }));
 
-  /** Provides a large-target alternative to the pinch gesture. */
-  function toggleZoom() {
-    scale.set((previous) => previous === FIT_SCALE ? 2 : FIT_SCALE);
-    panX.set(0);
-    panY.set(0);
-  }
-
   if (failed) return <ScreenMessage message="Couldn’t open this image. You can replace or delete it below." />;
 
   return (
@@ -77,9 +70,6 @@ export function ZoomablePhoto({ uri }: { uri: string }) {
           </Animated.View>
         </View>
       </GestureDetector>
-      <View style={{ position: 'absolute', right: spacing.medium, bottom: spacing.medium }}>
-        <JournalButton label="Toggle zoom" onPress={toggleZoom} />
-      </View>
     </View>
   );
 }

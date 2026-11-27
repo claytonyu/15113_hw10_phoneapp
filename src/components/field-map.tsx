@@ -6,8 +6,8 @@ import { Alert, Linking, Text, View } from 'react-native';
 import MapView, { Marker, type Region } from 'react-native-maps';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { JournalButton, JournalUnavailable } from '@/components/journal-ui';
-import { MapAction } from '@/components/map-controls';
+import { JournalUnavailable } from '@/components/journal-ui';
+import { MapAction, MapLocationButton, type MapLocationAppearance } from '@/components/map-controls';
 import { colors, spacing } from '@/constants/field-notes-theme';
 import { useMapLocation } from '@/hooks/use-map-location';
 import { useMapMarkers } from '@/hooks/use-map-markers';
@@ -39,8 +39,10 @@ export default function FieldMap() {
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [ready, setReady] = useState(false);
   const [following, setFollowing] = useState(true);
-  const followLatitude = following ? location.position?.coords.latitude : undefined;
-  const followLongitude = following ? location.position?.coords.longitude : undefined;
+  const [recenterRequest, setRecenterRequest] = useState(0);
+  const followPosition = following && !location.unavailable ? location.position : null;
+  const followLatitude = followPosition?.coords.latitude;
+  const followLongitude = followPosition?.coords.longitude;
   const markerGroups = useMapMarkers(map, entries, size, ready && status === 'ready', settledViewport, viewportVersion);
 
   useEffect(() => {
@@ -51,7 +53,7 @@ export default function FieldMap() {
       latitude: followLatitude, longitude: followLongitude,
       latitudeDelta: FOLLOW_DELTA, longitudeDelta: FOLLOW_DELTA,
     }, CAMERA_TRANSITION_MS);
-  }, [followLatitude, followLongitude, ready]);
+  }, [followLatitude, followLongitude, ready, recenterRequest]);
 
   /** Switches to manual placement as soon as a gesture starts. */
   function browseMap() {
@@ -59,11 +61,12 @@ export default function FieldMap() {
     setFollowing(false);
   }
 
-  /** Clears manual placement when the user asks to follow their location again. */
+  /** Clears manual placement and recenters even if follow mode is already active. */
   function resumeFollowing() {
     manuallyExploring.current = false;
     selectedCenter.current = null;
     setFollowing(true);
+    setRecenterRequest((previous) => previous + 1);
   }
 
   /** Publishes the viewport used for clustering after layout or camera movement. */
@@ -116,7 +119,7 @@ export default function FieldMap() {
     let guidance = 'Move the map to choose a center, or press and hold a spot.';
     if (!ready) guidance = 'Wait for the map to load, or continue without a location.';
     else if (!manual && location.granted) guidance = 'Try again when a recent GPS fix is available, or choose a spot on the map.';
-    else if (!manual) guidance = 'Tap Use location for GPS, or move the map to choose a spot.';
+    else if (!manual) guidance = 'Tap the location button for GPS, or move the map to choose a spot.';
 
     Alert.alert('Location not available', guidance, [
       { text: 'Cancel', style: 'cancel' },
@@ -144,22 +147,28 @@ export default function FieldMap() {
     router.push({ pathname: '/all-notes', params: { cluster: group.entries.map(({ id }) => id).join(',') } });
   }
 
-  const followLabel = location.granted ? 'Follow me' : 'Use location';
-  let mapStatus = 'Move the map to choose a location';
-  if (location.granted && following) {
-    if (location.unavailable) mapStatus = 'Location unavailable';
-    else mapStatus = location.position ? 'Following your location' : 'Finding your location…';
+  const needsPermission = location.permission !== null && !location.granted;
+  const finding = !location.unavailable && (location.permission === null
+    || (location.granted && following && !location.position));
+  let appearance: MapLocationAppearance = following ? 'following' : 'exploring';
+  let followLabel = following ? 'Following your location. Recenter map' : 'Exploring map. Follow my location';
+  if (needsPermission || location.unavailable) {
+    appearance = 'unavailable';
+    if (location.granted) followLabel = 'Location unavailable. Retry location';
+    else if (location.permission?.canAskAgain === false) followLabel = 'Location access denied. Open settings';
+    else followLabel = 'Allow location access';
+  } else if (offline) {
+    appearance = 'offline';
+    followLabel = finding ? 'Offline. Finding your location' : `Offline. ${followLabel}`;
+  } else if (finding) {
+    appearance = 'finding';
+    followLabel = 'Finding your location';
   }
-  if (offline) mapStatus = 'Offline · Map imagery may be unavailable';
 
   if (status !== 'ready') return <JournalUnavailable />;
 
   return (
     <SafeAreaView edges={['bottom', 'left', 'right']} style={{ flex: 1, backgroundColor: colors.paper }}>
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.small, alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing.large, paddingVertical: 4 }}>
-        <Text accessibilityLiveRegion="polite" style={{ flexShrink: 1, color: colors.muted, fontWeight: '600' }}>{mapStatus}</Text>
-        <JournalButton label={followLabel} onPress={() => { void followLocation(); }} secondary />
-      </View>
       <View
         onLayout={({ nativeEvent }) => setSize({ width: nativeEvent.layout.width, height: nativeEvent.layout.height })}
         style={{ flex: 1, overflow: 'hidden', backgroundColor: colors.line }}
@@ -213,11 +222,21 @@ export default function FieldMap() {
             );
           })}
         </MapView>
-        {offline && (
-          <View pointerEvents="none" style={{ position: 'absolute', top: 12, left: 12, right: 12, backgroundColor: colors.surface, borderRadius: 12, padding: spacing.medium }}>
-            <Text style={{ color: colors.ink }}>New entries will be saved without a location.</Text>
-          </View>
-        )}
+        <View
+          pointerEvents="box-none"
+          style={{
+            position: 'absolute', top: spacing.medium, left: spacing.medium, right: spacing.medium,
+            flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'flex-end', gap: spacing.small,
+          }}
+        >
+          {offline && (
+            <View pointerEvents="none" style={{ flex: 1, gap: 2, backgroundColor: colors.surface, borderRadius: 12, padding: spacing.medium }}>
+              <Text accessibilityLiveRegion="polite" style={{ color: colors.ink, fontWeight: '700' }}>Offline</Text>
+              <Text style={{ color: colors.ink }}>New entries will save without a location.</Text>
+            </View>
+          )}
+          <MapLocationButton appearance={appearance} label={followLabel} busy={finding} onPress={() => { void followLocation(); }} />
+        </View>
       </View>
       <View style={{ flexDirection: 'row', gap: spacing.small, padding: spacing.medium }}>
         <MapAction icon={{ ios: 'plus', android: 'add' }} label="Note" primary onPress={() => placeFromToolbar('note')} />

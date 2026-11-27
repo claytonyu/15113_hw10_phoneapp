@@ -1,9 +1,9 @@
 // Displays a saved photo and provides its replacement and deletion actions.
 import { router, useLocalSearchParams } from 'expo-router';
-import { Alert, Text, View } from 'react-native';
+import { Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { JournalButton, JournalUnavailable, leaveScreen, ScreenMessage } from '@/components/journal-ui';
+import { confirmEntryDeletion, JournalButton, JournalUnavailable, leaveScreen, ScreenMessage } from '@/components/journal-ui';
 import { ZoomablePhoto } from '@/components/zoomable-photo';
 import { colors, spacing } from '@/constants/field-notes-theme';
 import { useScreenAction } from '@/hooks/use-screen-action';
@@ -27,13 +27,7 @@ export default function PhotoScreen() {
 
   /** Asks for confirmation before deleting the photo record and its stored file. */
   function confirmDelete(photo: Photo) {
-    Alert.alert('Delete photo?', 'This permanently removes the photo from your journal.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete', style: 'destructive',
-        onPress: () => deletePhoto(photo),
-      },
-    ]);
+    confirmEntryDeletion(photo, () => deletePhoto(photo));
   }
 
   return (
@@ -51,7 +45,7 @@ export default function PhotoScreen() {
             label={entry.deletionPending ? 'Retry deletion' : 'Delete photo'}
             disabled={action.busy}
             onPress={() => entry.deletionPending ? deletePhoto(entry) : confirmDelete(entry)}
-            secondary
+            variant="destructive"
           />
         </View>
       </View>

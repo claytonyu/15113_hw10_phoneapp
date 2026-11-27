@@ -182,7 +182,7 @@ function CameraEditor({ existing }: { existing?: Photo }) {
           {preview ? (
             <>
               <JournalButton label={action.busy ? 'Saving…' : 'Save photo'} disabled={action.busy} onPress={save} />
-              <JournalButton label="Discard and retake" secondary disabled={action.busy} onPress={retake} />
+              <JournalButton label="Discard and retake" variant="secondary" disabled={action.busy} onPress={retake} />
             </>
           ) : (
             <>
@@ -202,7 +202,7 @@ function CameraEditor({ existing }: { existing?: Photo }) {
                   {action.busy ? 'Capturing…' : ready ? 'Take photo' : 'Starting camera…'}
                 </Text>
               </Pressable>
-              {!!action.error && <JournalButton label="Restart camera" secondary onPress={retryCamera} />}
+              {!!action.error && <JournalButton label="Restart camera" variant="secondary" onPress={retryCamera} />}
             </>
           )}
         </View>

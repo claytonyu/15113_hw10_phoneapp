@@ -10,6 +10,9 @@ export const colors = {
   photo: '#366253',
   danger: '#8A2F28',
   dark: '#201D19',
+  mapControl: '#F2F4F6',
+  mapControlBorder: '#CED3D9',
+  mapFollow: '#175CB0',
 };
 
 export const spacing = { small: 8, medium: 12, large: 20, extraLarge: 28 };

@@ -7,6 +7,7 @@ import { AppState } from 'react-native';
 const MAX_PLACEMENT_AGE_MS = 5_000;
 const MAX_PLACEMENT_ACCURACY_METERS = 50;
 const FOLLOW_INTERVAL_MS = 1_000;
+const FIRST_FIX_TIMEOUT_MS = 15_000;
 
 /** Provides the permission state and a recent fix to snapshot when placing an entry. */
 export function useMapLocation() {
@@ -47,6 +48,7 @@ export function useMapLocation() {
     let active = true;
     let latestTimestamp = -Infinity;
     let subscription: Location.LocationSubscription | undefined;
+    const firstFixTimeout = setTimeout(fail, FIRST_FIX_TIMEOUT_MS);
 
     /** Shares usable fixes across the map and placement controls. */
     function receive(fix: Location.LocationObject) {
@@ -58,6 +60,7 @@ export function useMapLocation() {
       }
       if (fix.timestamp < latestTimestamp) return;
       latestTimestamp = fix.timestamp;
+      clearTimeout(firstFixTimeout);
       setPosition(fix);
       setUnavailable(false);
     }
@@ -65,6 +68,7 @@ export function useMapLocation() {
     /** Gives the user a retry action if the platform cannot supply a fix. */
     function fail() {
       if (!active) return;
+      clearTimeout(firstFixTimeout);
       placementFix.current = null;
       setUnavailable(true);
     }
@@ -84,6 +88,7 @@ export function useMapLocation() {
 
     return () => {
       active = false;
+      clearTimeout(firstFixTimeout);
       placementFix.current = null;
       subscription?.remove();
     };
@@ -113,9 +118,16 @@ export function useMapLocation() {
     return { latitude, longitude };
   }
 
+  /** Gives a new watch time to find a fix before showing the retry state again. */
+  function retryLocation() {
+    placementFix.current = null;
+    setPosition(null);
+    setUnavailable(false);
+    setAttempt((previous) => previous + 1);
+  }
+
   return {
     permission, granted, position: granted ? position : null, unavailable,
-    requestLocation, snapshotLocation,
-    retryLocation: () => setAttempt((previous) => previous + 1),
+    requestLocation, snapshotLocation, retryLocation,
   };
 }
