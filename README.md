@@ -1,59 +1,41 @@
-# Welcome to your Expo app 👋
-Expo SDK 58
+# 15-113 Homework 10 Phone App - Field Notes
+Field Notes is a notes and photo-taking app where notes are located at the position you take them! You can search on a map where each note is, which helps you organize your thoughts spatially, unlike other note apps.
 
-REVIEW.md 16, 19 WARNs not taken care of
+This assignment was made for 15-114 (Effective Coding with AI Part 2), and was made with much assistance with OpenAI's Codex. See the [prompt log](prompt_log.md) for more information!
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+## User Screens
+1. Map
+  - This is the main screen of the app, where users see all their notes on a map.
+  - Press the "follow" icon on the top right to follow your phone.
+  - Tapping the buttons at the bottom to create a new text note or take a photo.
+  - Or, pan around and **long tap** to leave a note anywhere!
+2. Create New Note/Photo
+  - Leave a text note or take a photo.
+3. Edit Note/Photo
+  - Click a pin on the map to view its corresponding note or photo.
+  - You can also edit or delete the note from this screen.
+4. All Notes
+  - This shows all your notes in a list, including ones with no map location (created when offline).
 
-## Get started
+Permissions - Location and Camera required to use all features of this app.
 
+## Running the Project
+This project was run on Node.js 26.13.0 using Expo SDK 58, and tested on iOS.
 1. Install dependencies
-
    ```bash
    npm install
    ```
-
 2. Start the app
-
    ```bash
    npx expo start
    ```
+3. Open the app
+I downloaded [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo.
 
-In the output, you'll find options to open the app in a
+## Parts not fixed in REVIEW
+In [REVIEW.md](REVIEW.md), two warnings (16, 19) were not resolved.
+- #16 - Testing - An Android device was not used to test the app.
+- #19 - Scalability - This project was created as a prototype, so I did not write this with time or space efficiency as a major priority. This may run very slowly with an increasing number of notes and photos.
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **src/app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-npm run reset-project
-```
-
-This command will move the starter code to the **example** directory and create a blank **src/app** directory where you can start developing.
-
-### Other setup steps
-
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
-
-## Learn more
-
-To learn more about developing your project with Expo, look at the following resources:
-
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+## What I Learned about Mobile App Development
+One thing I learned about mobile app development is that many parts of expo depend on the phone's native system. For example, using `react-native-maps` is implemented to use Apple Maps on iPhones and Google Maps on Android phones.
